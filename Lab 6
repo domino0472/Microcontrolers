@@ -1,0 +1,82 @@
+#ifndef F_CPU
+#define F_CPU 16000000UL // ustawienie szybkości zegara 16 MHz
+#endif
+
+#include <avr/io.h>
+#include <util/delay.h>
+#include <avr/interrupt.h>
+
+// definicje zmiennych do sterowania 3 kanałami programowych PWM
+volatile uint8_t pwm1, pwm2, pwm3;
+
+// główna funkcja programu main()
+int main(void)
+{
+	//***** SPRZĘTOWY PWM - 1 KANAŁ OC0 (PB3) *******
+	DDRB |= (1<<PB3); 					// ustawienie końcówki OC0 (PB3) sprzętowy PWM jako WYJŚCIE
+	TCCR0 |= (1<<WGM01)|(1<<WGM00);		// tryb Fast PWM
+	TCCR0 |= (1<<COM01);				// clear at TOP
+	TCCR0 |= (1<<CS00);					// preskaler = 1
+	OCR0=255;							// początkowe wygaszenie diody w kanale PWM
+
+	//***** PROGRAMOWY PWM - 3 KANAŁy *******
+	DDRA |= (1<<PA0)|(1<<PA1)|(1<<PA2); 	// ustawienie pinów kanałów programowych PWM jako WYJŚCIA
+	PORTA |= (1<<PA0)|(1<<PA1)|(1<<PA2);	// wyłączenie diod LED podłączonych katodami do wyjść
+	
+	TCCR2 |= (1<<WGM21);	// tryb CTC
+	TCCR2 |= (1<<CS20);		// preskaler = 1
+	OCR2 = 199;				// dodatkowy podział częstotliwości przez 200
+	TIMSK |= (1<<OCIE2);	// zezwolenie na przerwanie CompareMatch
+	
+	//***** KONFIGURACJA PRZYCISKÓW (Dodane do zadania) *******
+	// Używamy PD0 (zmniejszanie) i PD1 (zwiększanie)
+	DDRD &= ~((1<<PD0) | (1<<PD1)); 	// Konfiguracja PD0 i PD1 jako WEJŚCIA (0)
+	PORTD |= (1<<PD0) | (1<<PD1);   	// Włączenie rezystorów podciągających (stan wysoki domyślnie)
+
+	sei();				// odblokowanie globalne przerwań
+	
+	uint8_t jasnosc = 0; // Zmienna przechowująca aktualny poziom jasności (0 - 255)
+
+	while(1)
+	{
+		// 1. Sprawdzenie przycisku ZWIĘKSZANIA jasności (PD1)
+		// Jeśli pin jest ściągnięty do masy (stan niski), przycisk jest wciśnięty
+		if (!(PIND & (1<<PD1))) 
+		{
+			if (jasnosc < 255) {
+				jasnosc++;
+			}
+			_delay_ms(10); // Opóźnienie zapobiegające drganiom styków i spowalniające zmiany
+		}
+
+		// 2. Sprawdzenie przycisku ZMNIEJSZANIA jasności (PD0)
+		if (!(PIND & (1<<PD0))) 
+		{
+			if (jasnosc > 0) {
+				jasnosc--;
+			}
+			_delay_ms(10);
+		}
+
+		// 3. Aktualizacja jasności diod
+		// Diody programowe rosną normalnie w górę
+		pwm1 = jasnosc;
+		pwm2 = jasnosc;
+		pwm3 = jasnosc;
+
+		// Dioda sprzętowa jest sterowana w odwróconej logice 
+		// (255 to wygaszenie, 0 to pełna jasność)
+		OCR0 = 255 - jasnosc; 
+	}
+}
+
+// ciało procedury obsługi przerwania Compare Match Timera2
+ISR( TIMER2_COMP_vect )
+{
+	static uint8_t cnt; // definicja naszego licznika PWM
+	// bezpośrednie sterowanie wyjściami kanałów PWM
+	if(cnt>=pwm1) PORTA |= (1<<PA0); else PORTA &= ~(1<<PA0);
+	if(cnt>=pwm2) PORTA |= (1<<PA1); else PORTA &= ~(1<<PA1);
+	if(cnt>=pwm3) PORTA |= (1<<PA2); else PORTA &= ~(1<<PA2);
+	cnt++;	// zwiększanie licznika o 1
+}
